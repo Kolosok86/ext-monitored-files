@@ -17,8 +17,8 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
         
     - name: Download and check for updates
+      shell: bash
       run: |
-        #!/bin/bash
         set -e
         
         echo "Downloading chrome-extension.zip..."
@@ -33,12 +33,9 @@ jobs:
           exit 1
         fi
         
-        # Создаем директорию если её нет
-        mkdir -p monitored-files
-        
         # Проверяем есть ли изменения
-        if [ -f "monitored-files/cached-key-items.json" ]; then
-          if cmp -s "assets/data/cached-key-items.json" "monitored-files/cached-key-items.json"; then
+        if [ -f "cached-key-items.json" ]; then
+          if cmp -s "assets/data/cached-key-items.json" "cached-key-items.json"; then
             echo "No changes detected in cached-key-items.json"
             exit 0
           else
@@ -49,11 +46,11 @@ jobs:
         fi
         
         # Копируем новую версию файла
-        cp "assets/data/cached-key-items.json" "monitored-files/cached-key-items.json"
+        cp "assets/data/cached-key-items.json" "cached-key-items.json"
         
         # Добавляем метаданные о времени обновления
-        echo "Last updated: $(date -u)" > "monitored-files/last-update.txt"
-        echo "Source: https://download.steaminventoryhelper.com/chrome-extension.zip" >> "monitored-files/last-update.txt"
+        echo "Last updated: $(date -u)" > "last-update.txt"
+        echo "Source: https://download.steaminventoryhelper.com/chrome-extension.zip" >> "last-update.txt"
         
         # Очищаем временные файлы
         rm -f chrome-extension.zip
@@ -67,7 +64,7 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         
-        git add monitored-files/
+        git add cached-key-items.json last-update.txt
         
         # Создаем коммит с информативным сообщением
         COMMIT_MSG="Update cached-key-items.json - $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
