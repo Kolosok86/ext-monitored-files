@@ -1,118 +1,43 @@
 #!/bin/bash
-# monitor-steam-extension.sh - Локальный скрипт для мониторинга изменений
 
-set -e
-
-# Настройки
-URL="https://download.steaminventoryhelper.com/chrome-extension.zip"
+# Папки и файлы
+WORKDIR="/home/vladislav/ext-monitored-files"  # Заменить на свой путь
+ARCHIVE_URL="https://download.steaminventoryhelper.com/chrome-extension.zip"
+ARCHIVE_FILE="/tmp/chrome-extension.zip"
+TMP_DIR="/tmp/chrome-extension"
 TARGET_FILE="assets/data/cached-key-items.json"
-MONITOR_DIR="monitored-files"
-TEMP_ZIP="chrome-extension.zip"
+OLD_HASH_FILE="/tmp/old_cached_key_hash.txt"
 
-echo "=== Steam Inventory Helper Monitor ==="
-echo "Starting at $(date)"
+cd "$WORKDIR" || exit 1
 
-# Создаем директорию для мониторинга
-mkdir -p "$MONITOR_DIR"
+# Скачиваем архив с заголовками через wget
+wget \
+  --header="User-Agent: Mozilla/5.0 (X11; Linux x86_64)" \
+  --header="Referer: https://steamcommunity.com/" \
+  --header="Accept: */*" \
+  "$ARCHIVE_URL" -O "$ARCHIVE_FILE"
 
-# Скачиваем архив
-echo "Downloading $URL..."
-if ! wget -q "$URL" -O "$TEMP_ZIP"; then
-    echo "Error: Failed to download file"
-    exit 1
+if [ $? -ne 0 ]; then
+  echo "❌ Ошибка при загрузке архива"
+  exit 1
 fi
 
-# Проверяем размер скачанного файла
-if [ ! -s "$TEMP_ZIP" ]; then
-    echo "Error: Downloaded file is empty"
-    rm -f "$TEMP_ZIP"
-    exit 1
-fi
+# Распаковываем
+rm -rf "$TMP_DIR"
+mkdir -p "$TMP_DIR"
+unzip -qq "$ARCHIVE_FILE" -d "$TMP_DIR"
 
-# Распаковываем архив
-echo "Extracting archive..."
-if ! unzip -q "$TEMP_ZIP"; then
-    echo "Error: Failed to extract archive"
-    rm -f "$TEMP_ZIP"
-    exit 1
-fi
+# Проверяем, изменился ли файл
+NEW_HASH=$(sha256sum "$TMP_DIR/$TARGET_FILE" | cut -d ' ' -f1)
+OLD_HASH=$(cat "$OLD_HASH_FILE" 2>/dev/null)
 
-# Проверяем существование целевого файла
-if [ ! -f "$TARGET_FILE" ]; then
-    echo "Error: Target file $TARGET_FILE not found in archive"
-    echo "Available files:"
-    find . -name "*.json" -type f | head -10
-    cleanup_and_exit 1
-fi
-
-# Функция очистки
-cleanup_and_exit() {
-    rm -f "$TEMP_ZIP"
-    rm -rf assets/ manifest.json background.js content.js popup.* options.* icons/ _locales/ || true
-    exit ${1:-0}
-}
-
-# Проверяем изменения
-CHANGES_DETECTED=false
-STORED_FILE="$MONITOR_DIR/cached-key-items.json"
-
-if [ -f "$STORED_FILE" ]; then
-    if cmp -s "$TARGET_FILE" "$STORED_FILE"; then
-        echo "No changes detected in $TARGET_FILE"
-        cleanup_and_exit 0
-    else
-        echo "Changes detected in $TARGET_FILE!"
-        CHANGES_DETECTED=true
-    fi
+if [ "$NEW_HASH" != "$OLD_HASH" ]; then
+  echo "✅ Обнаружены изменения, обновляем файл..."
+  cp "$TMP_DIR/$TARGET_FILE" "$WORKDIR/$TARGET_FILE"
+  echo "$NEW_HASH" > "$OLD_HASH_FILE"
+  git add "$TARGET_FILE"
+  git commit -m "Update cached-key-items.json ($(date +'%Y-%m-%d %H:%M:%S'))"
+  git push
 else
-    echo "First run - saving initial version of $TARGET_FILE"
-    CHANGES_DETECTED=true
+  echo "ℹ️  Изменений не обнаружено."
 fi
-
-if [ "$CHANGES_DETECTED" = true ]; then
-    # Копируем новую версию
-    cp "$TARGET_FILE" "$STORED_FILE"
-    
-    # Сохраняем метаданные
-    cat > "$MONITOR_DIR/last-update.txt" << EOF
-Last updated: $(date -u)
-Source: $URL
-File size: $(stat -c%s "$TARGET_FILE" 2>/dev/null || stat -f%z "$TARGET_FILE" 2>/dev/null || echo "unknown") bytes
-Checksum: $(sha256sum "$TARGET_FILE" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$TARGET_FILE" 2>/dev/null | cut -d' ' -f1 || echo "unknown")
-EOF
-    
-    # Делаем git commit если мы в git репозитории
-    if [ -d ".git" ]; then
-        echo "Making git commit..."
-        
-        git add "$MONITOR_DIR/"
-        
-        COMMIT_MSG="Update cached-key-items.json - $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-        
-        if git commit -m "$COMMIT_MSG"; then
-            echo "Changes committed successfully"
-            
-            # Спрашиваем о push (только в интерактивном режиме)
-            if [ -t 0 ]; then
-                read -p "Push changes to remote? (y/N): " -n 1 -r
-                echo
-                if [[ $REPLY =~ ^[Yy]$ ]]; then
-                    git push
-                    echo "Changes pushed to remote"
-                fi
-            else
-                echo "Non-interactive mode - skipping push"
-            fi
-        else
-            echo "No changes to commit (files already staged?)"
-        fi
-    else
-        echo "Not a git repository - changes saved locally only"
-    fi
-    
-    echo "File updated successfully!"
-else
-    echo "No changes detected"
-fi
-
-cleanup_and_exit 0
